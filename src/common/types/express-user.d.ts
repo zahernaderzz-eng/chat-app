@@ -1,0 +1,8 @@
+import { JwtPayload } from '../../app/auth/interfaces/jwt-payload.interface';
+declare global {
+  namespace Express {
+    interface Request {
+      user?: JwtPayload;
+    }
+  }
+}
