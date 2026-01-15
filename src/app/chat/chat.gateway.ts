@@ -282,4 +282,44 @@ export class ChatGateway implements OnGatewayConnection, OnGatewayDisconnect {
       });
     }
   }
+
+  @SubscribeMessage('deleteChat')
+  async handleDeleteChat(
+    @ConnectedSocket() client: Socket,
+    @MessageBody() data: { conversationId: string },
+  ) {
+    try {
+      const userId = client.data.userId;
+
+      if (!userId) {
+        client.emit('error', {
+          event: 'deleteChat',
+          message: 'Not authenticated',
+        });
+        return;
+      }
+
+      if (!data.conversationId) {
+        client.emit('error', {
+          event: 'deleteChat',
+          message: 'conversationId required',
+        });
+        return;
+      }
+
+      await this.conversationService.deleteForUser(data.conversationId, userId);
+
+      client.emit('chatDeleted', {
+        conversationId: data.conversationId,
+        deletedAt: new Date(),
+      });
+
+      console.log(`Chat ${data.conversationId} deleted for user ${userId}`);
+    } catch (error) {
+      client.emit('error', {
+        event: 'deleteChat',
+        message: error.message,
+      });
+    }
+  }
 }

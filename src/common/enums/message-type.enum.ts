@@ -4,5 +4,4 @@ export enum MessageType {
   VIDEO = 'video',
   AUDIO = 'audio',
   DOCUMENT = 'document',
-  LOCATION = 'location',
 }
