@@ -7,9 +7,7 @@ import {
   Index,
   JoinColumn,
 } from 'typeorm';
-
-
-import { User } from '@app/users/entities/user.entity';
+import { Users } from '@app/users/entities/user.entity';
 import { MessageType } from '@common/enums/message-type.enum';
 import type { MessageMetadata } from '@common/interfaces/message-metadata.interface';
 import { Conversation } from '@app/conversations/entities/conversation.entity';
@@ -29,6 +27,7 @@ export class Message {
 
   @Column('text')
   content: string;
+
   @Column({ type: 'json', nullable: true })
   metadata?: MessageMetadata;
 
@@ -42,18 +41,22 @@ export class Message {
   @Column()
   senderId: string;
 
-  @ManyToOne(() => User)
+  @ManyToOne(() => Users)
   @JoinColumn({ name: 'senderId' })
-  sender: User;
+  sender: Users;
+
+  @Column({ type: 'uuid', nullable: true })
+  replyToId?: string | null;
+
+  @ManyToOne(() => Message, { nullable: true, onDelete: 'SET NULL' })
+  @JoinColumn({ name: 'replyToId' })
+  replyTo?: Message | null;
 
   @Column({ default: false })
   isRead: boolean;
 
   @Column({ default: false })
   isDelivered: boolean;
-
-  @Column({ default: false })
-  isDeleted: boolean;
 
   @CreateDateColumn()
   createdAt: Date;

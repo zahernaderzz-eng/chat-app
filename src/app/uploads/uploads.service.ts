@@ -1,23 +1,23 @@
-// uploads/uploads.service.ts
-
 import { Injectable } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
-import sharp from 'sharp';
+import * as fs from 'fs';
 import * as path from 'path';
+
+const sharp = require('sharp');
 
 @Injectable()
 export class UploadsService {
   private baseUrl: string;
+  private uploadsPath: string;
 
   constructor(private configService: ConfigService) {
     this.baseUrl =
       this.configService.get<string>('APP_URL') || 'http://localhost:4000';
+    this.uploadsPath = path.join(process.cwd(), 'uploads');
   }
 
   async processImage(file: Express.Multer.File, userId: string) {
-   
     const metadata = await sharp(file.path).metadata();
-
 
     const thumbnailName = `thumb_${file.filename}`;
     const thumbnailPath = path.join(path.dirname(file.path), thumbnailName);
@@ -54,5 +54,42 @@ export class UploadsService {
       mimeType: file.mimetype,
       duration: null,
     };
+  }
+
+  // حذف الملف من السيرفر
+  async deleteFile(fileUrl: string): Promise<boolean> {
+    try {
+      // استخراج المسار من الـ URL
+      // مثال: http://localhost:3000/uploads/images/abc123.jpg
+      // نريد: uploads/images/abc123.jpg
+      const urlPath = new URL(fileUrl).pathname;
+      // urlPath = /uploads/images/abc123.jpg
+
+      const filePath = path.join(process.cwd(), urlPath);
+      // filePath = /app/uploads/images/abc123.jpg
+
+      // تحقق من وجود الملف
+      if (fs.existsSync(filePath)) {
+        fs.unlinkSync(filePath);
+        console.log(`Deleted file: ${filePath}`);
+      }
+
+      // حذف الـ thumbnail لو صورة
+      if (urlPath.includes('/images/')) {
+        const dir = path.dirname(filePath);
+        const filename = path.basename(filePath);
+        const thumbnailPath = path.join(dir, `thumb_${filename}`);
+
+        if (fs.existsSync(thumbnailPath)) {
+          fs.unlinkSync(thumbnailPath);
+          console.log(`Deleted thumbnail: ${thumbnailPath}`);
+        }
+      }
+
+      return true;
+    } catch (error) {
+      console.error('Error deleting file:', error);
+      return false;
+    }
   }
 }

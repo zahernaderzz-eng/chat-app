@@ -14,12 +14,14 @@ import { MessageType } from '@common/enums/message-type.enum';
 import { ChatAuthService } from './services/chat-auth.service';
 import { ChatSocketService } from './services/chat-socket.service';
 import { ConversationHelperService } from './services/conversation-helper.service';
+import { DeleteType } from '@app/messages/dto/delete-message.dto';
 
 interface SendMessagePayload {
   conversationId: string;
   content: string;
   type?: MessageType;
   metadata?: Record<string, any>;
+  replyToId?: string;
 }
 
 @WebSocketGateway({
@@ -151,11 +153,12 @@ export class ChatGateway implements OnGatewayConnection, OnGatewayDisconnect {
         content: payload.content,
         type: payload.type ?? MessageType.TEXT,
         metadata: payload.metadata,
+        replyToId: payload.replyToId,
       });
 
       this.server.to(payload.conversationId).emit('newMessage', message);
       console.log(`Message sent in ${payload.conversationId}`);
-    } catch (error: any) {
+    } catch (error) {
       console.error('sendMessage error:', error);
       client.emit('error', {
         event: 'sendMessage',
@@ -318,6 +321,61 @@ export class ChatGateway implements OnGatewayConnection, OnGatewayDisconnect {
     } catch (error) {
       client.emit('error', {
         event: 'deleteChat',
+        message: error.message,
+      });
+    }
+  }
+  @SubscribeMessage('deleteMessage')
+  async handleDeleteMessage(
+    @ConnectedSocket() client: Socket,
+    @MessageBody() data: { messageId: string; deleteType: 'forMe' | 'forAll' },
+  ) {
+    try {
+      const userId = client.data.userId;
+
+      if (!userId) {
+        client.emit('error', {
+          event: 'deleteMessage',
+          message: 'Not authenticated',
+        });
+        return;
+      }
+
+      if (!data.messageId || !data.deleteType) {
+        client.emit('error', {
+          event: 'deleteMessage',
+          message: 'messageId and deleteType required',
+        });
+        return;
+      }
+
+      const deleteType =
+        data.deleteType === 'forAll' ? DeleteType.FOR_ALL : DeleteType.FOR_ME;
+
+      const result = await this.messagesService.deleteMessage(
+        data.messageId,
+        userId,
+        deleteType,
+      );
+
+      if (deleteType === DeleteType.FOR_ALL) {
+        this.server.to(result.conversationId).emit('messageDeletedForAll', {
+          messageId: result.messageId,
+          conversationId: result.conversationId,
+        });
+      } else {
+        client.emit('messageDeletedForMe', {
+          messageId: result.messageId,
+          conversationId: result.conversationId,
+        });
+      }
+
+      console.log(
+        `Message ${data.messageId} deleted (${data.deleteType}) by ${userId}`,
+      );
+    } catch (error) {
+      client.emit('error', {
+        event: 'deleteMessage',
         message: error.message,
       });
     }

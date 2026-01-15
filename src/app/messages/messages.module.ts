@@ -1,11 +1,18 @@
-import { Module, forwardRef } from '@nestjs/common';
+import { Module } from '@nestjs/common';
 import { TypeOrmModule } from '@nestjs/typeorm';
 import { Message } from './entities/message.entity';
-import { ConversationModule } from '@app/conversations/conversations.module';
+import { MessageDeletion } from './entities/message-deletion.entity';
 import { MessagesService } from './messages.service';
 
+import { ConversationModule } from '@app/conversations/conversations.module';
+import { UploadsModule } from '@app/uploads/uploads.module';
+
 @Module({
-  imports: [TypeOrmModule.forFeature([Message]), ConversationModule],
+  imports: [
+    TypeOrmModule.forFeature([Message, MessageDeletion]),
+    ConversationModule,
+    UploadsModule,
+  ],
 
   providers: [MessagesService],
   exports: [MessagesService],

@@ -28,4 +28,8 @@ export class CreateMessageDto {
   @ValidateNested()
   @Type(() => MessageMetadataDto)
   metadata?: MessageMetadataDto;
+
+  @IsOptional()
+  @IsUUID()
+  replyToId?: string;
 }

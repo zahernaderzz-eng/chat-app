@@ -3,7 +3,7 @@ import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
 import { CreateUserDto } from './dto/create-user.dto';
 import { UpdateUserDto } from './dto/update-user.dto';
-import { User } from './entities/user.entity';
+import { Users } from './entities/user.entity';
 import { JwtTokenService } from '@app/auth/services/jwt-token.service';
 import { JwtPayload } from '@app/auth/interfaces/jwt-payload.interface';
 import { LoginDto } from './dto/login.dto';
@@ -11,8 +11,8 @@ import { LoginDto } from './dto/login.dto';
 @Injectable()
 export class UsersService {
   constructor(
-    @InjectRepository(User)
-    private readonly userRepo: Repository<User>,
+    @InjectRepository(Users)
+    private readonly userRepo: Repository<Users>,
     private readonly jwtService: JwtTokenService,
   ) {}
 

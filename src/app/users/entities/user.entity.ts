@@ -1,16 +1,27 @@
-import { Entity, Column } from 'typeorm';
-import { Exclude } from 'class-transformer';
-import { BaseEntity } from '@common/entities/base.entity';
+// users/entities/user.entity.ts
 
-@Entity('users')
-export class User extends BaseEntity {
-  @Column({ length: 100, unique: true })
+import { Exclude } from 'class-transformer';
+import {
+  Entity,
+  Column,
+  PrimaryGeneratedColumn,
+  CreateDateColumn,
+  UpdateDateColumn,
+  DeleteDateColumn,
+} from 'typeorm';
+
+@Entity()
+export class Users {
+  @PrimaryGeneratedColumn('uuid')
+  id: string;
+
+  @Column()
   name: string;
 
   @Column({ unique: true })
   email: string;
 
-  @Column({ unique: true })
+  @Column({ nullable: true })
   phone: string;
 
   @Column({ nullable: true })
@@ -19,7 +30,19 @@ export class User extends BaseEntity {
   @Column({ nullable: true })
   lastSeen: Date;
 
-  @Column()
   @Exclude()
+  @Column()
   password: string;
+
+  @Exclude()
+  @CreateDateColumn()
+  createdAt: Date;
+
+  @Exclude()
+  @UpdateDateColumn()
+  updatedAt: Date;
+
+  @Exclude()
+  @DeleteDateColumn()
+  deletedAt: Date;
 }
