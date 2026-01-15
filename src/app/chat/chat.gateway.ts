@@ -8,10 +8,12 @@ import {
   OnGatewayDisconnect,
 } from '@nestjs/websockets';
 import { Server, Socket } from 'socket.io';
-import { JwtService } from '@nestjs/jwt';
 import { ConversationService } from '@app/conversations/conversations.service';
 import { MessagesService } from '@app/messages/messages.service';
 import { MessageType } from '@common/enums/message-type.enum';
+import { ChatAuthService } from './services/chat-auth.service';
+import { ChatSocketService } from './services/chat-socket.service';
+import { ConversationHelperService } from './services/conversation-helper.service';
 
 interface SendMessagePayload {
   conversationId: string;
@@ -27,60 +29,29 @@ export class ChatGateway implements OnGatewayConnection, OnGatewayDisconnect {
   @WebSocketServer()
   server: Server;
 
-  private userSockets = new Map<string, Set<string>>();
-
   constructor(
     private readonly conversationService: ConversationService,
     private readonly messagesService: MessagesService,
-    private readonly jwtService: JwtService,
+    private readonly chatAuthService: ChatAuthService,
+    private readonly chatSocketService: ChatSocketService,
+    private readonly conversationHelperService: ConversationHelperService,
   ) {}
 
   async handleConnection(client: Socket) {
     try {
-      const token =
-        client.handshake.auth?.token ||
-        client.handshake.headers?.authorization?.replace('Bearer ', '');
-
-      if (!token) {
-        client.emit('error', { message: 'Authentication required' });
-        client.disconnect();
-        return;
-      }
-
-      const payload = this.jwtService.verify(token);
-      const userId = payload.sub || payload.userId;
-
-      if (!userId) {
-        client.emit('error', { message: 'Invalid token' });
-        client.disconnect();
-        return;
-      }
+      const userId = this.chatAuthService.verifySocketToken(client);
 
       client.data.userId = userId;
 
-      const set = this.userSockets.get(userId) ?? new Set<string>();
-      set.add(client.id);
-      this.userSockets.set(userId, set);
+      this.chatSocketService.addSocket(userId, client);
 
       const conversations =
         await this.conversationService.getUserConversations(userId);
 
-      conversations.forEach((conv) => {
-        client.join(conv.id);
-      });
+      this.chatSocketService.joinClientToConversations(client, conversations);
 
-      const conversationsWithUnread = await Promise.all(
-        conversations.map(async (conv) => {
-          const unreadCount = await this.messagesService.getUnreadCount(
-            conv.id,
-            userId,
-          );
-          return {
-            ...conv,
-            unreadCount,
-          };
-        }),
-      );
+      const conversationsWithUnread =
+        await this.conversationHelperService.getConversationsWithUnread(userId);
 
       console.log(
         `Connected: ${client.id}, userId=${userId}, rooms=${conversations.length}`,
@@ -90,7 +61,7 @@ export class ChatGateway implements OnGatewayConnection, OnGatewayDisconnect {
         userId,
         conversations: conversationsWithUnread,
       });
-    } catch (error) {
+    } catch (error: any) {
       console.log('Auth error:', error.message);
       client.emit('error', { message: 'Authentication failed' });
       client.disconnect();
@@ -101,13 +72,7 @@ export class ChatGateway implements OnGatewayConnection, OnGatewayDisconnect {
     const userId = client.data?.userId;
 
     if (userId) {
-      const set = this.userSockets.get(userId);
-      if (set) {
-        set.delete(client.id);
-        if (set.size === 0) {
-          this.userSockets.delete(userId);
-        }
-      }
+      this.chatSocketService.removeSocket(userId, client);
     }
 
     console.log(`Disconnected: ${client.id}, userId=${userId}`);
@@ -138,27 +103,17 @@ export class ChatGateway implements OnGatewayConnection, OnGatewayDisconnect {
       client.join(conversation.id);
       console.log(`${userId} joined room ${conversation.id}`);
 
-      const otherUserSockets = this.userSockets.get(body.toUserId);
-      console.log(
-        `Looking for ${body.toUserId}: ${otherUserSockets?.size ?? 0} sockets`,
+      this.chatSocketService.addOtherUserSocketsToConversation(
+        conversation,
+        body.toUserId,
+        this.server,
       );
-
-      if (otherUserSockets && otherUserSockets.size > 0) {
-        for (const socketId of otherUserSockets) {
-          const otherSocket = this.server.sockets.sockets.get(socketId);
-          if (otherSocket) {
-            otherSocket.join(conversation.id);
-            otherSocket.emit('newConversation', conversation);
-            console.log(`${body.toUserId} joined room ${conversation.id}`);
-          }
-        }
-      }
 
       const roomSockets = await this.server.in(conversation.id).fetchSockets();
       console.log(`Room ${conversation.id} has ${roomSockets.length} sockets`);
 
       client.emit('conversationStarted', conversation);
-    } catch (error) {
+    } catch (error: any) {
       console.error('startConversation error:', error);
       client.emit('error', {
         event: 'startConversation',
@@ -200,7 +155,7 @@ export class ChatGateway implements OnGatewayConnection, OnGatewayDisconnect {
 
       this.server.to(payload.conversationId).emit('newMessage', message);
       console.log(`Message sent in ${payload.conversationId}`);
-    } catch (error) {
+    } catch (error: any) {
       console.error('sendMessage error:', error);
       client.emit('error', {
         event: 'sendMessage',
@@ -249,7 +204,7 @@ export class ChatGateway implements OnGatewayConnection, OnGatewayDisconnect {
         conversationId: data.conversationId,
         ...result,
       });
-    } catch (error) {
+    } catch (error: any) {
       client.emit('error', {
         event: 'getMessages',
         message: error.message,
@@ -292,7 +247,7 @@ export class ChatGateway implements OnGatewayConnection, OnGatewayDisconnect {
       console.log(
         `Messages marked as read in ${data.conversationId} by ${userId}`,
       );
-    } catch (error) {
+    } catch (error: any) {
       client.emit('error', {
         event: 'markAsRead',
         message: error.message,
@@ -316,21 +271,11 @@ export class ChatGateway implements OnGatewayConnection, OnGatewayDisconnect {
       const conversations =
         await this.conversationService.getUserConversations(userId);
 
-      const conversationsWithUnread = await Promise.all(
-        conversations.map(async (conv) => {
-          const unreadCount = await this.messagesService.getUnreadCount(
-            conv.id,
-            userId,
-          );
-          return {
-            ...conv,
-            unreadCount,
-          };
-        }),
-      );
+      const conversationsWithUnread =
+        await this.conversationHelperService.getConversationsWithUnread(userId);
 
       client.emit('conversationsLoaded', conversationsWithUnread);
-    } catch (error) {
+    } catch (error: any) {
       client.emit('error', {
         event: 'getConversations',
         message: error.message,

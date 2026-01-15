@@ -13,6 +13,7 @@ import { JwtAuthGuard } from '@app/auth/guards/jwt-auth.guard';
 import { ChatModule } from '@app/chat/chat.module';
 import { ConversationModule } from '@app/conversations/conversations.module';
 import { MessageModule } from '@app/messages/messages.module';
+import { UploadsModule } from './app/uploads/uploads.module';
 
 @Module({
   imports: [
@@ -25,6 +26,7 @@ import { MessageModule } from '@app/messages/messages.module';
     ChatModule,
     ConversationModule,
     MessageModule,
+    UploadsModule,
   ],
   controllers: [AppController],
   providers: [
