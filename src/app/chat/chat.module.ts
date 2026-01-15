@@ -3,9 +3,10 @@ import { ChatGateway } from './chat.gateway';
 import { WsJwtAuthGuard } from '@app/auth/guards/ws-jwt-auth.guard';
 import { AuthModule } from '@app/auth/auth.module';
 import { ConversationModule } from '@app/conversations/conversations.module';
+import { MessageModule } from '@app/messages/messages.module';
 
 @Module({
-  imports: [AuthModule, ConversationModule],
+  imports: [AuthModule, ConversationModule, MessageModule],
   providers: [ChatGateway, WsJwtAuthGuard],
 })
 export class ChatModule {}

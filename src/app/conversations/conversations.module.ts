@@ -4,12 +4,8 @@ import { Conversation } from './entities/conversation.entity';
 import { ConversationService } from './conversations.service';
 import { MessageModule } from '@app/messages/messages.module';
 
-
 @Module({
-  imports: [
-    TypeOrmModule.forFeature([Conversation]),
-    forwardRef(() => MessageModule),
-  ],
+  imports: [TypeOrmModule.forFeature([Conversation])],
   providers: [ConversationService],
   exports: [ConversationService],
 })

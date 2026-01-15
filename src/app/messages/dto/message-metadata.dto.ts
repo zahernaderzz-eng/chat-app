@@ -1,6 +1,22 @@
-import { IsOptional, IsString, IsNumber } from 'class-validator';
+import { IsOptional, IsString, IsNumber, IsUUID } from 'class-validator';
 
 export class MessageMetadataDto {
+  @IsOptional()
+  @IsNumber()
+  width?: number;
+
+  @IsOptional()
+  @IsNumber()
+  height?: number;
+
+  @IsOptional()
+  @IsNumber()
+  duration?: number;
+
+  @IsOptional()
+  @IsString()
+  thumbnail?: string;
+
   @IsOptional()
   @IsString()
   fileName?: string;
@@ -14,10 +30,6 @@ export class MessageMetadataDto {
   mimeType?: string;
 
   @IsOptional()
-  @IsNumber()
-  width?: number;
-
-  @IsOptional()
-  @IsNumber()
-  height?: number;
+  @IsUUID()
+  replyTo?: string;
 }

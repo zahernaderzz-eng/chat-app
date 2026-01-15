@@ -1,7 +1,8 @@
-import { Injectable } from '@nestjs/common';
+import { Injectable, NotFoundException } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { Repository } from 'typeorm';
+import { ArrayContains, Repository } from 'typeorm';
 import { Conversation } from './entities/conversation.entity';
+import { MessageType } from '@common/enums/message-type.enum';
 
 @Injectable()
 export class ConversationService {
@@ -37,5 +38,49 @@ export class ConversationService {
 
   private normalizeParticipants(ids: string[]) {
     return [...ids].sort();
+  }
+  async isMember(conversationId: string, userId: string): Promise<boolean> {
+    const conversation = await this.conversationRepo.findOne({
+      where: { id: conversationId },
+    });
+
+    if (!conversation) return false;
+
+    return conversation.participantIds.includes(userId);
+  }
+
+  async updateLastMessage(
+    conversationId: string,
+    messageData: {
+      content: string;
+      type: MessageType;
+      senderId: string;
+    },
+  ): Promise<void> {
+    await this.conversationRepo.update(conversationId, {
+      lastMessage: messageData,
+      lastMessageAt: new Date(),
+    });
+  }
+
+  async findOne(id: string): Promise<Conversation> {
+    const conversation = await this.conversationRepo.findOne({
+      where: { id },
+    });
+
+    if (!conversation) {
+      throw new NotFoundException('Conversation not found');
+    }
+
+    return conversation;
+  }
+
+  async getUserConversations(userId: string): Promise<Conversation[]> {
+    return this.conversationRepo.find({
+      where: {
+        participantIds: ArrayContains([userId]),
+      },
+      order: { lastMessageAt: 'DESC' },
+    });
   }
 }

@@ -7,19 +7,22 @@ import {
   IsUUID,
   ValidateNested,
 } from 'class-validator';
-import { MessageMetadataDto } from './message-metadata.dto';
+
 import { Type } from 'class-transformer';
+import { MessageMetadataDto } from './message-metadata.dto';
 
-export class SendMessageDto {
+export class CreateMessageDto {
   @IsUUID()
+  @IsNotEmpty()
   conversationId: string;
-
-  @IsEnum(MessageType)
-  type: MessageType;
 
   @IsString()
   @IsNotEmpty()
   content: string;
+
+  @IsEnum(MessageType)
+  @IsOptional()
+  type?: MessageType = MessageType.TEXT;
 
   @IsOptional()
   @ValidateNested()
