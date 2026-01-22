@@ -22,14 +22,9 @@ import { Logger, UseGuards, ValidationPipe } from '@nestjs/common';
 import { WsJwtAuthGuard } from '@app/auth/guards/ws-jwt-auth.guard';
 import { DeleteChatSocketDto } from './Dtos/delete-chat-dto';
 import { MarkAsReadSocketDto } from './Dtos/mark-as-read-dto';
-
-interface SendMessagePayload {
-  conversationId: string;
-  content: string;
-  type?: MessageType;
-  metadata?: Record<string, any>;
-  replyToId?: string;
-}
+import { GetMessagesSocketDto } from './Dtos/get-message-dto';
+import { SendMessageSocketDto } from './Dtos/send-message-dto';
+import { StartConversationSocketDto } from './Dtos/start-conversation-dto';
 
 @WebSocketGateway({
   cors: { origin: '*' },
@@ -51,30 +46,24 @@ export class ChatGateway implements OnGatewayConnection, OnGatewayDisconnect {
   async handleConnection(client: Socket) {
     try {
       const userId = this.chatAuthService.verifySocketToken(client);
-
       client.data.userId = userId;
 
-      this.chatSocketService.addSocket(userId, client);
+      const conversations = await this.initializeUserSocket(client, userId);
 
-      const conversations =
-        await this.conversationService.getUserConversations(userId);
-
-      this.chatSocketService.joinClientToConversations(client, conversations);
-
-      const conversationsWithUnread =
-        await this.conversationHelperService.getConversationsWithUnread(userId);
-
-      console.log(
-        `Connected: ${client.id}, userId=${userId}, rooms=${conversations.length}`,
-      );
+      this.logger.log(`Connected: ${client.id}, userId=${userId}`);
 
       client.emit('connected', {
         userId,
-        conversations: conversationsWithUnread,
+        conversations,
       });
-    } catch (error: any) {
-      console.log('Auth error:', error.message);
-      client.emit('error', { message: 'Authentication failed' });
+    } catch (error) {
+      this.logger.warn(`Socket auth failed for ${client.id}`);
+
+      client.emit('socketError', {
+        action: 'connect',
+        message: 'Authentication failed',
+      });
+
       client.disconnect();
     }
   }
@@ -86,141 +75,112 @@ export class ChatGateway implements OnGatewayConnection, OnGatewayDisconnect {
       this.chatSocketService.removeSocket(userId, client);
     }
 
-    console.log(`Disconnected: ${client.id}, userId=${userId}`);
+    this.logger.log(`Disconnected: ${client.id}, userId=${userId}`);
   }
 
+  @UseGuards(WsJwtAuthGuard)
   @SubscribeMessage('startConversation')
   async handleStartConversation(
     @ConnectedSocket() client: Socket,
-    @MessageBody() body: { toUserId: string },
+    @MessageBody(
+      new ValidationPipe({
+        transform: true,
+        whitelist: true,
+        forbidNonWhitelisted: true,
+      }),
+    )
+    data: StartConversationSocketDto,
   ) {
     try {
       const userId = client.data.userId;
-
-      if (!userId) {
-        client.emit('error', {
-          event: 'startConversation',
-          message: 'Not authenticated',
-        });
-        return;
-      }
 
       const conversation =
         await this.conversationService.getOrCreateConversation(
           userId,
-          body.toUserId,
+          data.toUserId,
         );
 
       client.join(conversation.id);
-      console.log(`${userId} joined room ${conversation.id}`);
 
       this.chatSocketService.addOtherUserSocketsToConversation(
         conversation,
-        body.toUserId,
+        data.toUserId,
         this.server,
       );
 
-      const roomSockets = await this.server.in(conversation.id).fetchSockets();
-      console.log(`Room ${conversation.id} has ${roomSockets.length} sockets`);
+      this.logger.log(`User ${userId} joined conversation ${conversation.id}`);
 
       client.emit('conversationStarted', conversation);
-    } catch (error: any) {
-      console.error('startConversation error:', error);
-      client.emit('error', {
-        event: 'startConversation',
-        message: error.message,
-      });
+    } catch (error) {
+      this.emitError(client, 'startConversation', error);
     }
   }
 
+  @UseGuards(WsJwtAuthGuard)
   @SubscribeMessage('sendMessage')
   async handleSendMessage(
     @ConnectedSocket() client: Socket,
-    @MessageBody() payload: SendMessagePayload,
+    @MessageBody(
+      new ValidationPipe({
+        transform: true,
+        whitelist: true,
+        forbidNonWhitelisted: true,
+      }),
+    )
+    data: SendMessageSocketDto,
   ) {
     try {
       const userId = client.data.userId;
 
-      if (!userId) {
-        client.emit('error', {
-          event: 'sendMessage',
-          message: 'Not authenticated',
-        });
-        return;
-      }
-
-      if (!payload.conversationId || !payload.content?.trim()) {
-        client.emit('error', {
-          event: 'sendMessage',
-          message: 'conversationId and content required',
-        });
-        return;
-      }
-
       const message = await this.messagesService.create(userId, {
-        conversationId: payload.conversationId,
-        content: payload.content,
-        type: payload.type ?? MessageType.TEXT,
-        metadata: payload.metadata,
-        replyToId: payload.replyToId,
+        conversationId: data.conversationId,
+        content: data.content,
+        type: data.type ?? MessageType.TEXT,
+        metadata: data.metadata,
+        replyToId: data.replyToId,
       });
 
-      this.server.to(payload.conversationId).emit('newMessage', message);
-      console.log(`Message sent in ${payload.conversationId}`);
+      this.server.to(data.conversationId).emit('newMessage', message);
+
+      this.logger.log(`Message sent in ${data.conversationId} by ${userId}`);
     } catch (error) {
-      console.error('sendMessage error:', error);
-      client.emit('error', {
-        event: 'sendMessage',
-        message: error.message,
-      });
+      this.emitError(client, 'sendMessage', error);
     }
   }
 
+  @UseGuards(WsJwtAuthGuard)
   @SubscribeMessage('getMessages')
   async handleGetMessages(
     @ConnectedSocket() client: Socket,
-    @MessageBody()
-    data: {
-      conversationId: string;
-      page?: number;
-      limit?: number;
-    },
+    @MessageBody(
+      new ValidationPipe({
+        transform: true,
+        whitelist: true,
+        forbidNonWhitelisted: true,
+      }),
+    )
+    data: GetMessagesSocketDto,
   ) {
     try {
       const userId = client.data.userId;
-
-      if (!userId) {
-        client.emit('error', {
-          event: 'getMessages',
-          message: 'Not authenticated',
-        });
-        return;
-      }
-
-      if (!data.conversationId) {
-        client.emit('error', {
-          event: 'getMessages',
-          message: 'conversationId required',
-        });
-        return;
-      }
 
       const result = await this.messagesService.findByConversation(
         data.conversationId,
         userId,
-        data.page ?? 1,
-        data.limit ?? 50,
+        data.page,
+        data.limit,
       );
 
       client.emit('messagesLoaded', {
         conversationId: data.conversationId,
         ...result,
       });
-    } catch (error: any) {
-      client.emit('error', {
-        event: 'getMessages',
-        message: error.message,
-      });
+
+      this.logger.log(
+        `Messages loaded for conversation ${data.conversationId} by ${userId}`,
+      );
+    } catch (error) {
+      this.emitError(client, 'getMessages', error);
     }
   }
 
@@ -228,7 +188,14 @@ export class ChatGateway implements OnGatewayConnection, OnGatewayDisconnect {
   @SubscribeMessage('markAsRead')
   async handleMarkAsRead(
     @ConnectedSocket() client: Socket,
-    @MessageBody() data: MarkAsReadSocketDto,
+    @MessageBody(
+      new ValidationPipe({
+        transform: true,
+        whitelist: true,
+        forbidNonWhitelisted: true,
+      }),
+    )
+    data: MarkAsReadSocketDto,
   ) {
     try {
       const userId = client.data.userId;
@@ -270,7 +237,14 @@ export class ChatGateway implements OnGatewayConnection, OnGatewayDisconnect {
   @SubscribeMessage('deleteChat')
   async handleDeleteChat(
     @ConnectedSocket() client: Socket,
-    @MessageBody() data: DeleteChatSocketDto,
+    @MessageBody(
+      new ValidationPipe({
+        transform: true,
+        whitelist: true,
+        forbidNonWhitelisted: true,
+      }),
+    )
+    data: DeleteChatSocketDto,
   ) {
     try {
       const userId = client.data.userId;
@@ -292,7 +266,13 @@ export class ChatGateway implements OnGatewayConnection, OnGatewayDisconnect {
   @SubscribeMessage('deleteMessage')
   async handleDeleteMessage(
     @ConnectedSocket() client: Socket,
-    @MessageBody(new ValidationPipe({ transform: true }))
+    @MessageBody(
+      new ValidationPipe({
+        transform: true,
+        whitelist: true,
+        forbidNonWhitelisted: true,
+      }),
+    )
     data: DeleteMessageDto,
   ) {
     try {
@@ -330,5 +310,16 @@ export class ChatGateway implements OnGatewayConnection, OnGatewayDisconnect {
       action,
       message: error?.message ?? 'Unexpected error',
     });
+  }
+
+  private async initializeUserSocket(client: Socket, userId: string) {
+    this.chatSocketService.addSocket(userId, client);
+
+    const conversations =
+      await this.conversationService.getUserConversations(userId);
+
+    this.chatSocketService.joinClientToConversations(client, conversations);
+
+    return this.conversationHelperService.getConversationsWithUnread(userId);
   }
 }
