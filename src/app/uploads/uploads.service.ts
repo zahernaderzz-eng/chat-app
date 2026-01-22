@@ -56,25 +56,19 @@ export class UploadsService {
     };
   }
 
-  // حذف الملف من السيرفر
   async deleteFile(fileUrl: string): Promise<boolean> {
     try {
-      // استخراج المسار من الـ URL
-      // مثال: http://localhost:3000/uploads/images/abc123.jpg
-      // نريد: uploads/images/abc123.jpg
       const urlPath = new URL(fileUrl).pathname;
       // urlPath = /uploads/images/abc123.jpg
 
       const filePath = path.join(process.cwd(), urlPath);
       // filePath = /app/uploads/images/abc123.jpg
 
-      // تحقق من وجود الملف
       if (fs.existsSync(filePath)) {
         fs.unlinkSync(filePath);
         console.log(`Deleted file: ${filePath}`);
       }
 
-      // حذف الـ thumbnail لو صورة
       if (urlPath.includes('/images/')) {
         const dir = path.dirname(filePath);
         const filename = path.basename(filePath);

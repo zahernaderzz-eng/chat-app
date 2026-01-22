@@ -7,19 +7,22 @@ import {
   BadRequestException,
 } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { Repository, Not, MoreThan, In } from 'typeorm';
+import { Repository } from 'typeorm';
 import { Message } from './entities/message.entity';
 import { MessageDeletion } from './entities/message-deletion.entity';
 
 import { DeleteType } from './dto/delete-message.dto';
+
 import { ConversationService } from '@app/conversations/conversations.service';
-import { UploadsService } from '@app/uploads/uploads.service';
 import { MessageType } from '@common/enums/message-type.enum';
 import {
   transformMessage,
   transformMessages,
 } from './helpers/message.transformer';
 import { CreateMessageDto } from './dto/send-message.dto';
+import { DeleteMessageResult } from './interfaces/delete-message-result ';
+import { DeleteMessageService } from './services/delete-message.service';
+
 
 @Injectable()
 export class MessagesService {
@@ -29,7 +32,7 @@ export class MessagesService {
     @InjectRepository(MessageDeletion)
     private readonly messageDeletionRepo: Repository<MessageDeletion>,
     private readonly conversationService: ConversationService,
-    private readonly uploadsService: UploadsService,
+    private readonly deleteMessageService: DeleteMessageService,
   ) {}
 
   async create(senderId: string, dto: CreateMessageDto) {
@@ -168,84 +171,6 @@ export class MessagesService {
     };
   }
 
-  // حذف الرسالة
-  async deleteMessage(
-    messageId: string,
-    userId: string,
-    deleteType: DeleteType,
-  ) {
-    const message = await this.messageRepo.findOne({
-      where: { id: messageId },
-      relations: ['sender'],
-    });
-
-    if (!message) {
-      throw new NotFoundException('Message not found');
-    }
-
-    const isMember = await this.conversationService.isMember(
-      message.conversationId,
-      userId,
-    );
-
-    if (!isMember) {
-      throw new ForbiddenException('You are not a member of this conversation');
-    }
-
-    if (deleteType === DeleteType.FOR_ALL) {
-      // حذف للجميع - فقط صاحب الرسالة يقدر
-      if (message.senderId !== userId) {
-        throw new ForbiddenException(
-          'You can only delete your own messages for everyone',
-        );
-      }
-
-      // حذف الملف من السيرفر لو مش نص
-      if (message.type !== MessageType.TEXT && message.content) {
-        await this.uploadsService.deleteFile(message.content);
-
-        // حذف الـ thumbnail لو موجود
-        if (message.metadata?.thumbnail) {
-          await this.uploadsService.deleteFile(message.metadata.thumbnail);
-        }
-      }
-
-      // حذف الرسالة من Database نهائيا
-      const conversationId = message.conversationId;
-      await this.messageRepo.remove(message);
-
-      // حذف اي سجلات حذف مرتبطة بهذه الرسالة
-      await this.messageDeletionRepo.delete({ messageId });
-
-      return {
-        messageId,
-        conversationId,
-        deleteType: DeleteType.FOR_ALL,
-        deletedAt: new Date(),
-      };
-    } else {
-      // حذف لي فقط
-      const existingDeletion = await this.messageDeletionRepo.findOne({
-        where: { messageId, userId },
-      });
-
-      if (!existingDeletion) {
-        const deletion = this.messageDeletionRepo.create({
-          messageId,
-          userId,
-        });
-        await this.messageDeletionRepo.save(deletion);
-      }
-
-      return {
-        messageId: message.id,
-        conversationId: message.conversationId,
-        deleteType: DeleteType.FOR_ME,
-        deletedAt: new Date(),
-      };
-    }
-  }
-
   async getUnreadCount(
     conversationId: string,
     userId: string,
@@ -289,7 +214,7 @@ export class MessagesService {
       .update(Message)
       .set({ isRead: true })
       .where('conversationId = :conversationId', { conversationId })
-      .andWhere('senderId != :userId', { userId })
+      .andWhere('senderId != :userId', { userId }) ////
       .andWhere('isRead = :isRead', { isRead: false });
 
     if (deletionDate) {
@@ -297,5 +222,17 @@ export class MessagesService {
     }
 
     await query.execute();
+  }
+
+  async deleteMessage(
+    messageId: string,
+    userId: string,
+    deleteType: DeleteType,
+  ): Promise<DeleteMessageResult> {
+    return this.deleteMessageService.deleteMessage(
+      messageId,
+      userId,
+      deleteType,
+    );
   }
 }

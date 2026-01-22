@@ -14,7 +14,13 @@ import { MessageType } from '@common/enums/message-type.enum';
 import { ChatAuthService } from './services/chat-auth.service';
 import { ChatSocketService } from './services/chat-socket.service';
 import { ConversationHelperService } from './services/conversation-helper.service';
-import { DeleteType } from '@app/messages/dto/delete-message.dto';
+import {
+  DeleteMessageDto,
+  DeleteType,
+} from '@app/messages/dto/delete-message.dto';
+import { Logger, UseGuards, ValidationPipe } from '@nestjs/common';
+import { WsJwtAuthGuard } from '@app/auth/guards/ws-jwt-auth.guard';
+import { DeleteChatSocketDto } from './Dtos/delete-chat-dto';
 
 interface SendMessagePayload {
   conversationId: string;
@@ -30,6 +36,8 @@ interface SendMessagePayload {
 export class ChatGateway implements OnGatewayConnection, OnGatewayDisconnect {
   @WebSocketServer()
   server: Server;
+
+  private readonly logger = new Logger(ChatGateway.name);
 
   constructor(
     private readonly conversationService: ConversationService,
@@ -286,29 +294,14 @@ export class ChatGateway implements OnGatewayConnection, OnGatewayDisconnect {
     }
   }
 
+  @UseGuards(WsJwtAuthGuard)
   @SubscribeMessage('deleteChat')
   async handleDeleteChat(
     @ConnectedSocket() client: Socket,
-    @MessageBody() data: { conversationId: string },
+    @MessageBody() data: DeleteChatSocketDto,
   ) {
     try {
       const userId = client.data.userId;
-
-      if (!userId) {
-        client.emit('error', {
-          event: 'deleteChat',
-          message: 'Not authenticated',
-        });
-        return;
-      }
-
-      if (!data.conversationId) {
-        client.emit('error', {
-          event: 'deleteChat',
-          message: 'conversationId required',
-        });
-        return;
-      }
 
       await this.conversationService.deleteForUser(data.conversationId, userId);
 
@@ -317,48 +310,29 @@ export class ChatGateway implements OnGatewayConnection, OnGatewayDisconnect {
         deletedAt: new Date(),
       });
 
-      console.log(`Chat ${data.conversationId} deleted for user ${userId}`);
+      this.logger.log(`Chat ${data.conversationId} deleted for user ${userId}`);
     } catch (error) {
-      client.emit('error', {
-        event: 'deleteChat',
-        message: error.message,
-      });
+      this.emitError(client, 'deleteChat', error);
     }
   }
+
+  @UseGuards(WsJwtAuthGuard)
   @SubscribeMessage('deleteMessage')
   async handleDeleteMessage(
     @ConnectedSocket() client: Socket,
-    @MessageBody() data: { messageId: string; deleteType: 'forMe' | 'forAll' },
+    @MessageBody(new ValidationPipe({ transform: true }))
+    data: DeleteMessageDto,
   ) {
     try {
       const userId = client.data.userId;
 
-      if (!userId) {
-        client.emit('error', {
-          event: 'deleteMessage',
-          message: 'Not authenticated',
-        });
-        return;
-      }
-
-      if (!data.messageId || !data.deleteType) {
-        client.emit('error', {
-          event: 'deleteMessage',
-          message: 'messageId and deleteType required',
-        });
-        return;
-      }
-
-      const deleteType =
-        data.deleteType === 'forAll' ? DeleteType.FOR_ALL : DeleteType.FOR_ME;
-
       const result = await this.messagesService.deleteMessage(
         data.messageId,
         userId,
-        deleteType,
+        data.deleteType,
       );
 
-      if (deleteType === DeleteType.FOR_ALL) {
+      if (data.deleteType === DeleteType.FOR_ALL) {
         this.server.to(result.conversationId).emit('messageDeletedForAll', {
           messageId: result.messageId,
           conversationId: result.conversationId,
@@ -370,14 +344,19 @@ export class ChatGateway implements OnGatewayConnection, OnGatewayDisconnect {
         });
       }
 
-      console.log(
+      this.logger.log(
         `Message ${data.messageId} deleted (${data.deleteType}) by ${userId}`,
       );
     } catch (error) {
-      client.emit('error', {
-        event: 'deleteMessage',
-        message: error.message,
-      });
+      this.logger.error('Delete message error:', error);
+      this.emitError(client, 'deleteMessage', error);
     }
+  }
+
+  private emitError(client: Socket, action: string, error: any) {
+    client.emit('socketError', {
+      action,
+      message: error?.message ?? 'Unexpected error',
+    });
   }
 }

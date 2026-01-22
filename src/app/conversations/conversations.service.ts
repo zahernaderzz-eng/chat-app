@@ -1,15 +1,21 @@
-import {
-  Injectable,
-  NotFoundException,
-} from '@nestjs/common';
+import { Injectable, NotFoundException } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository, ArrayContains } from 'typeorm';
 import { Conversation } from './entities/conversation.entity';
 import { ConversationDeletion } from './entities/conversation-deletion.entity';
 import { MessageType } from '@common/enums/message-type.enum';
 
+interface LastMessageData {
+  content: string;
+  type: MessageType;
+  senderId: string;
+}
+
 @Injectable()
 export class ConversationService {
+  private static readonly MAX_PREVIEW_LENGTH = 100;
+  private static readonly PREVIEW_ELLIPSIS = '...';
+
   constructor(
     @InjectRepository(Conversation)
     private readonly conversationRepo: Repository<Conversation>,
@@ -34,7 +40,9 @@ export class ConversationService {
       where: { id: conversationId },
     });
 
-    if (!conversation) return false;
+    if (!conversation) {
+      return false;
+    }
 
     return conversation.participantIds.includes(userId);
   }
@@ -43,21 +51,16 @@ export class ConversationService {
     userId: string,
     toUserId: string,
   ): Promise<Conversation> {
-    const existingConversation = await this.conversationRepo.findOne({
-      where: [
-        { participantIds: ArrayContains([userId, toUserId]) },
-      ],
-    });
+    const existingConversation = await this.findExistingConversation(
+      userId,
+      toUserId,
+    );
 
     if (existingConversation) {
       return existingConversation;
     }
 
-    const conversation = this.conversationRepo.create({
-      participantIds: [userId, toUserId],
-    });
-
-    return this.conversationRepo.save(conversation);
+    return this.createConversation([userId, toUserId]);
   }
 
   async getUserConversations(userId: string): Promise<Conversation[]> {
@@ -71,51 +74,21 @@ export class ConversationService {
 
   async updateLastMessage(
     conversationId: string,
-    messageData: {
-      content: string;
-      type: MessageType;
-      senderId: string;
-    },
+    messageData: LastMessageData,
   ): Promise<void> {
-    const truncatedContent =
-      messageData.content.length > 100
-        ? messageData.content.substring(0, 100) + '...'
-        : messageData.content;
-
     await this.conversationRepo.update(conversationId, {
       lastMessage: {
         ...messageData,
-        content: truncatedContent,
+        content: this.truncateContent(messageData.content),
       },
       lastMessageAt: new Date(),
     });
   }
 
   async deleteForUser(conversationId: string, userId: string): Promise<void> {
-    const conversation = await this.findOne(conversationId);
-
-    const isMember = conversation.participantIds.includes(userId);
-    if (!isMember) {
-      throw new NotFoundException('Conversation not found');
-    }
-
-    const existingDeletion = await this.deletionRepo.findOne({
-      where: { conversationId, userId },
-    });
-
-    if (existingDeletion) {
-      existingDeletion.deletedAt = new Date();
-      await this.deletionRepo.save(existingDeletion);
-    } else {
-      const deletion = this.deletionRepo.create({
-        conversationId,
-        userId,
-        deletedAt: new Date(),
-      });
-      await this.deletionRepo.save(deletion);
-    }
+    await this.validateUserMembership(conversationId, userId);
+    await this.upsertDeletion(conversationId, userId);
   }
-
 
   async getDeletionDate(
     conversationId: string,
@@ -126,5 +99,70 @@ export class ConversationService {
     });
 
     return deletion?.deletedAt || null;
+  }
+
+  // Private helper methods
+
+  private async findExistingConversation(
+    userId: string,
+    toUserId: string,
+  ): Promise<Conversation | null> {
+    return this.conversationRepo.findOne({
+      where: {
+        participantIds: ArrayContains([userId, toUserId]),
+      },
+    });
+  }
+
+  private async createConversation(
+    participantIds: string[],
+  ): Promise<Conversation> {
+    const conversation = this.conversationRepo.create({ participantIds });
+    return this.conversationRepo.save(conversation);
+  }
+
+  private truncateContent(content: string): string {
+    if (content.length <= ConversationService.MAX_PREVIEW_LENGTH) {
+      return content;
+    }
+
+    return (
+      content.substring(0, ConversationService.MAX_PREVIEW_LENGTH) +
+      ConversationService.PREVIEW_ELLIPSIS
+    );
+  }
+
+  private async validateUserMembership(
+    conversationId: string,
+    userId: string,
+  ): Promise<void> {
+    const conversation = await this.findOne(conversationId);
+
+    if (!conversation.participantIds.includes(userId)) {
+      throw new NotFoundException('Conversation not found');
+    }
+  }
+
+  private async upsertDeletion(
+    conversationId: string,
+    userId: string,
+  ): Promise<void> {
+    const existingDeletion = await this.deletionRepo.findOne({
+      where: { conversationId, userId },
+    });
+
+    const deletedAt = new Date();
+
+    if (existingDeletion) {
+      existingDeletion.deletedAt = deletedAt;
+      await this.deletionRepo.save(existingDeletion);
+    } else {
+      const deletion = this.deletionRepo.create({
+        conversationId,
+        userId,
+        deletedAt,
+      });
+      await this.deletionRepo.save(deletion);
+    }
   }
 }

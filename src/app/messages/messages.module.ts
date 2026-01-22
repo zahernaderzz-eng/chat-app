@@ -3,6 +3,7 @@ import { TypeOrmModule } from '@nestjs/typeorm';
 import { Message } from './entities/message.entity';
 import { MessageDeletion } from './entities/message-deletion.entity';
 import { MessagesService } from './messages.service';
+import { DeleteMessageService } from './services/delete-message.service';
 
 import { ConversationModule } from '@app/conversations/conversations.module';
 import { UploadsModule } from '@app/uploads/uploads.module';
@@ -14,7 +15,7 @@ import { UploadsModule } from '@app/uploads/uploads.module';
     UploadsModule,
   ],
 
-  providers: [MessagesService],
+  providers: [MessagesService, DeleteMessageService],
   exports: [MessagesService],
 })
 export class MessageModule {}
