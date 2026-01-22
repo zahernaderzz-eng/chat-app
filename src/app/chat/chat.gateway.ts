@@ -21,6 +21,7 @@ import {
 import { Logger, UseGuards, ValidationPipe } from '@nestjs/common';
 import { WsJwtAuthGuard } from '@app/auth/guards/ws-jwt-auth.guard';
 import { DeleteChatSocketDto } from './Dtos/delete-chat-dto';
+import { MarkAsReadSocketDto } from './Dtos/mark-as-read-dto';
 
 interface SendMessagePayload {
   conversationId: string;
@@ -223,29 +224,14 @@ export class ChatGateway implements OnGatewayConnection, OnGatewayDisconnect {
     }
   }
 
+  @UseGuards(WsJwtAuthGuard)
   @SubscribeMessage('markAsRead')
   async handleMarkAsRead(
     @ConnectedSocket() client: Socket,
-    @MessageBody() data: { conversationId: string },
+    @MessageBody() data: MarkAsReadSocketDto,
   ) {
     try {
       const userId = client.data.userId;
-
-      if (!userId) {
-        client.emit('error', {
-          event: 'markAsRead',
-          message: 'Not authenticated',
-        });
-        return;
-      }
-
-      if (!data.conversationId) {
-        client.emit('error', {
-          event: 'markAsRead',
-          message: 'conversationId required',
-        });
-        return;
-      }
 
       await this.messagesService.markAsRead(data.conversationId, userId);
 
@@ -255,42 +241,28 @@ export class ChatGateway implements OnGatewayConnection, OnGatewayDisconnect {
         readAt: new Date(),
       });
 
-      console.log(
+      this.logger.log(
         `Messages marked as read in ${data.conversationId} by ${userId}`,
       );
-    } catch (error: any) {
-      client.emit('error', {
-        event: 'markAsRead',
-        message: error.message,
-      });
+    } catch (error) {
+      this.emitError(client, 'markAsRead', error);
     }
   }
 
+  @UseGuards(WsJwtAuthGuard)
   @SubscribeMessage('getConversations')
   async handleGetConversations(@ConnectedSocket() client: Socket) {
     try {
       const userId = client.data.userId;
 
-      if (!userId) {
-        client.emit('error', {
-          event: 'getConversations',
-          message: 'Not authenticated',
-        });
-        return;
-      }
-
       const conversations =
-        await this.conversationService.getUserConversations(userId);
-
-      const conversationsWithUnread =
         await this.conversationHelperService.getConversationsWithUnread(userId);
 
-      client.emit('conversationsLoaded', conversationsWithUnread);
-    } catch (error: any) {
-      client.emit('error', {
-        event: 'getConversations',
-        message: error.message,
-      });
+      client.emit('conversationsLoaded', conversations);
+
+      this.logger.log(`Conversations loaded for user ${userId}`);
+    } catch (error) {
+      this.emitError(client, 'getConversations', error);
     }
   }
 
